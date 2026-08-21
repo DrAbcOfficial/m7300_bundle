@@ -32,6 +32,9 @@ jobs:
     env:
       PACKAGE_NAME: pantum-m7300-bundle${{ matrix.variant.suffix }}
       ENABLE_ESCL: ${{ matrix.variant.escl }}
+      # Avoid interactive prompts (e.g. tzdata) during apt-get in the container
+      DEBIAN_FRONTEND: noninteractive
+      TZ: Etc/UTC
 
     # Container jobs default to sh (dash); the scripts below use bashisms.
     defaults:
