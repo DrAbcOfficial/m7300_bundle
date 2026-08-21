@@ -4,7 +4,7 @@ Bundles the [pantum_m7300](https://github.com/DrAbcOfficial/pantum_m7300) driver
 
 ## Build
 
-- **Runner:** `ubuntu-24.04-arm` (ARM64); builds run inside an `ubuntu:22.04` container so the GUI links against `libwebkit2gtk-4.0` (removed from Ubuntu 24.04) and a lower glibc baseline
+- **Runner:** `ubuntu-24.04-arm` (ARM64); builds run inside an `ubuntu:20.04` container so the GUI links against `libwebkit2gtk-4.0` (removed from Ubuntu 24.04) and the glibc baseline is lowered to 2.31
 - **Trigger:** push a tag `v*` or run the workflow manually (`workflow_dispatch`)
 - **Version:** read from the `VERSION` file in this repo (currently `1.0.1`). Tag-triggered builds require the tag to match it exactly (e.g. tag `v1.0.1`). To release a new version: bump `VERSION`, commit, tag, push.
 
@@ -34,4 +34,4 @@ sudo apt install ./pantum-m7300-bundle_1.0.1_arm64.deb
 sudo apt install ./pantum-m7300-bundle-noairscan_1.0.1_arm64.deb
 ```
 
-Requires Ubuntu/Debian on ARM64 with `libsane1`, `libcups2` and `libwebkit2gtk-4.0-37` (or `4.1`); dependencies are resolved automatically by `apt`. After installation, launch **Pantum Scanner** from the applications menu or run `pantum-scan-gui`.
+Requires Ubuntu/Debian on ARM64 with glibc >= 2.31, `libsane1`, `libcups2` and `libwebkit2gtk-4.0-37` (or `4.1`); dependencies are resolved automatically by `apt`. The full variant additionally depends on `sane-airscan` (available on Ubuntu 22.04+). After installation, launch **Pantum Scanner** from the applications menu or run `pantum-scan-gui`.

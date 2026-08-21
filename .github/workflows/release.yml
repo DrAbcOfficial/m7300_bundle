@@ -13,10 +13,10 @@ jobs:
   build:
     name: Build ${{ matrix.variant.name }}
     runs-on: ubuntu-24.04-arm
-    # Ubuntu 24.04 (noble) 已移除 libwebkit2gtk-4.0;
-    # 在 ubuntu:22.04 (jammy) 容器内构建, 使 GUI 兼容 libwebkit2gtk-4.0 及以上任意版本,
-    # 同时获得更低的 glibc 基线 (2.35), 兼容更多发行版。
-    container: ubuntu:22.04
+    # Ubuntu 24.04 (noble) dropped libwebkit2gtk-4.0. Build inside an
+    # ubuntu:20.04 (focal) container so the GUI links against
+    # libwebkit2gtk-4.0 and the glibc baseline is lowered to 2.31.
+    container: ubuntu:20.04
 
     strategy:
       fail-fast: false
@@ -33,7 +33,7 @@ jobs:
       PACKAGE_NAME: pantum-m7300-bundle${{ matrix.variant.suffix }}
       ENABLE_ESCL: ${{ matrix.variant.escl }}
 
-    # ubuntu:22.04 容器默认使用 sh (dash), 脚本含 bash 语法, 统一指定 bash
+    # Container jobs default to sh (dash); the scripts below use bashisms.
     defaults:
       run:
         shell: bash
@@ -42,7 +42,17 @@ jobs:
       - name: Install git (required by checkout)
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends git ca-certificates bash
+          apt-get install -y --no-install-recommends git ca-certificates bash curl
+
+      - name: Install modern CMake (focal ships 3.16, project requires >= 3.20)
+        run: |
+          CMAKE_VERSION=3.28.3
+          curl -fsSL "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-aarch64.tar.gz" \
+            -o /tmp/cmake.tar.gz
+          tar -xzf /tmp/cmake.tar.gz -C /opt
+          ln -sf /opt/cmake-${CMAKE_VERSION}-linux-aarch64/bin/* /usr/local/bin/
+          rm /tmp/cmake.tar.gz
+          cmake --version
 
       - name: Check out source (with submodules)
         uses: actions/checkout@v4
@@ -57,10 +67,11 @@ jobs:
             echo "VERSION file is empty" >&2
             exit 1
           fi
-          # 若由 tag 触发, 要求 tag 与 VERSION 文件一致 (版本号以仓库文件为准)
+          # For tag-triggered runs the tag must match the VERSION file,
+          # which is the single source of truth for the package version.
           if [[ "$GITHUB_REF_TYPE" == "tag" && "$GITHUB_REF_NAME" != "v$VERSION" ]]; then
             echo "Tag '$GITHUB_REF_NAME' does not match VERSION file ('v$VERSION')." >&2
-            echo "请更新 VERSION 文件或使用与之匹配的 tag。" >&2
+            echo "Update the VERSION file or push a matching tag." >&2
             exit 1
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
@@ -83,14 +94,18 @@ jobs:
       - name: Install build dependencies
         run: |
           apt-get update
-          PKGS="build-essential cmake dpkg-dev pkg-config
+          PKGS="build-essential g++-10 dpkg-dev pkg-config
             libcups2-dev libxml2-dev libjpeg-dev zlib1g-dev libpng-dev libsane-dev
             libgtk-3-dev libwebkit2gtk-4.0-dev"
-          if [[ "$ENABLE_ESCL" == "ON" ]]; then
-            PKGS="$PKGS sane-airscan"
-          fi
           # shellcheck disable=SC2086
           apt-get install -y $PKGS
+          if [[ "$ENABLE_ESCL" == "ON" ]]; then
+            # focal has no sane-airscan package. CMake only checks for the
+            # airscan-discover program via find_program (it is neither
+            # compiled nor linked), so a stub satisfies the configure step.
+            # The runtime dependency stays declared in the deb control file.
+            install -m0755 /dev/null /usr/local/bin/airscan-discover
+          fi
 
       - name: Install Wails CLI
         run: |
@@ -99,6 +114,7 @@ jobs:
 
       - name: Build driver (pantum_m7300)
         run: |
+          CC=gcc-10 CXX=g++-10 \
           cmake -S pantum_m7300 -B build/driver \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX=/usr \
@@ -120,10 +136,10 @@ jobs:
           STAGING="$GITHUB_WORKSPACE/staging"
           mkdir -p "$STAGING"
 
-          # --- 驱动: 安装到暂存目录 ---
+          # Driver: install into the staging directory
           DESTDIR="$STAGING" cmake --install build/driver
 
-          # --- SANE 后端: 重命名为 libsane-* 形式并创建符号链接 ---
+          # SANE backends: rename to libsane-* and create symlinks
           SANE_DIR="$(find "$STAGING/usr" -type d -name sane -print -quit)"
           if [[ -z "$SANE_DIR" ]]; then
             echo "Installed SANE backend directory was not found." >&2
@@ -141,7 +157,7 @@ jobs:
             ln -s "$target_module" "$SANE_DIR/libsane-${backend}.so"
           done
 
-          # --- 扫描 GUI: 二进制 / 图标 / 桌面入口 ---
+          # Scan GUI: binary / icon / desktop entry
           GUI_BIN="m7300_scan_gui/build/bin/pantum-scan-gui"
           if [[ ! -x "$GUI_BIN" ]]; then
             echo "GUI binary not found: $GUI_BIN" >&2
@@ -175,7 +191,7 @@ jobs:
           mkdir -p "$DEBIAN_DIR"
           chmod 755 "$STAGING"
 
-          DEPENDS='libc6, libcups2, libsane1, libjpeg-turbo8 | libjpeg62-turbo, libpng16-16, zlib1g, libxml2, libgtk-3-0, libwebkit2gtk-4.0-37 | libwebkit2gtk-4.1-0'
+          DEPENDS='libc6 (>= 2.31), libcups2, libsane1, libjpeg-turbo8 | libjpeg62-turbo, libpng16-16, zlib1g, libxml2, libgtk-3-0, libwebkit2gtk-4.0-37 | libwebkit2gtk-4.1-0'
           if [[ "$ENABLE_ESCL" == "ON" ]]; then
             DEPENDS="$DEPENDS, sane-airscan"
           fi
