@@ -9,12 +9,25 @@ on:
 permissions:
   contents: write
 
-env:
-  PACKAGE_NAME: pantum-m7300-bundle
-
 jobs:
   release:
+    name: Build ${{ matrix.variant.name }}
     runs-on: ubuntu-24.04-arm
+
+    strategy:
+      fail-fast: false
+      matrix:
+        variant:
+          - name: full (with airscan)
+            suffix: ''
+            escl: 'ON'
+          - name: noairscan
+            suffix: '-noairscan'
+            escl: 'OFF'
+
+    env:
+      PACKAGE_NAME: pantum-m7300-bundle${{ matrix.variant.suffix }}
+      ENABLE_ESCL: ${{ matrix.variant.escl }}
 
     steps:
       - name: Check out source (with submodules)
@@ -56,11 +69,14 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            build-essential cmake dpkg-dev pkg-config \
-            libcups2-dev libxml2-dev libjpeg-dev zlib1g-dev libpng-dev libsane-dev \
-            sane-airscan \
-            libgtk-3-dev libwebkit2gtk-4.1-dev
+          PKGS="build-essential cmake dpkg-dev pkg-config
+            libcups2-dev libxml2-dev libjpeg-dev zlib1g-dev libpng-dev libsane-dev
+            libgtk-3-dev libwebkit2gtk-4.0-dev"
+          if [[ "$ENABLE_ESCL" == "ON" ]]; then
+            PKGS="$PKGS sane-airscan"
+          fi
+          # shellcheck disable=SC2086
+          sudo apt-get install -y $PKGS
 
       - name: Install Wails CLI
         run: |
@@ -73,7 +89,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX=/usr \
             -DENABLE_PNG_SUPPORT=ON \
-            -DENABLE_ESCL_SUPPORT=ON
+            -DENABLE_ESCL_SUPPORT="$ENABLE_ESCL"
           cmake --build build/driver --parallel
 
       - name: Install frontend dependencies
@@ -81,7 +97,7 @@ jobs:
         working-directory: m7300_scan_gui/frontend
 
       - name: Build scan GUI (m7300_scan_gui)
-        run: wails build -clean -platform linux/arm64 -tags webkit2_41
+        run: wails build -clean -platform linux/arm64
         working-directory: m7300_scan_gui
 
       - name: Assemble deb staging directory
@@ -145,6 +161,11 @@ jobs:
           mkdir -p "$DEBIAN_DIR"
           chmod 755 "$STAGING"
 
+          DEPENDS='libc6, libcups2, libsane1, libjpeg-turbo8 | libjpeg62-turbo, libpng16-16, zlib1g, libxml2, libgtk-3-0, libwebkit2gtk-4.0-37 | libwebkit2gtk-4.1-0'
+          if [[ "$ENABLE_ESCL" == "ON" ]]; then
+            DEPENDS="$DEPENDS, sane-airscan"
+          fi
+
           printf '%s\n' \
             "Package: ${PACKAGE_NAME}" \
             "Version: ${VERSION}" \
@@ -152,7 +173,7 @@ jobs:
             "Priority: optional" \
             "Architecture: ${ARCHITECTURE}" \
             'Maintainer: Pantum Linux Driver Maintainers <drivers@example.invalid>' \
-            'Depends: libc6, libcups2, libsane1, libjpeg-turbo8 | libjpeg62-turbo, libpng16-16, zlib1g, libxml2, sane-airscan, libgtk-3-0, libwebkit2gtk-4.1-0' \
+            "Depends: ${DEPENDS}" \
             'Description: Pantum M7300FDN/M7300FDW drivers and scanner GUI bundle' \
             ' CUPS PostScript filters, PPDs, SANE WSD backends, scan utilities,' \
             ' and the pantum-scan-gui desktop application.' \
@@ -192,16 +213,23 @@ jobs:
           fi
           ARCHITECTURE="$(dpkg --print-architecture)"
           DEB_FILE="dist/${PACKAGE_NAME}_${VERSION}_${ARCHITECTURE}.deb"
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$DEB_FILE" "$DEB_FILE.sha256" --clobber
-          else
+
+          # 两个 matrix job 并行发布到同一 release: 先确保 release 存在, 再上传产物
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
             TARGET_ARGS=()
             if [[ "$GITHUB_REF_TYPE" != "tag" ]]; then
               TARGET_ARGS=(--target "$GITHUB_SHA")
             fi
             gh release create "$TAG" \
-              "$DEB_FILE" "$DEB_FILE.sha256" \
               --title "$TAG" \
               --generate-notes \
-              "${TARGET_ARGS[@]}"
+              "${TARGET_ARGS[@]}" || true
           fi
+
+          for attempt in 1 2 3 4 5; do
+            if gh release upload "$TAG" "$DEB_FILE" "$DEB_FILE.sha256" --clobber; then
+              break
+            fi
+            echo "Upload failed (attempt $attempt), retrying..." >&2
+            sleep 5
+          done
