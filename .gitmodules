@@ -1,0 +1,6 @@
+[submodule "pantum_m7300"]
+	path = pantum_m7300
+	url = https://github.com/DrAbcOfficial/pantum_m7300
+[submodule "m7300_scan_gui"]
+	path = m7300_scan_gui
+	url = https://github.com/DrAbcOfficial/m7300_scan_gui
