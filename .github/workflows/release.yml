@@ -33,11 +33,16 @@ jobs:
       PACKAGE_NAME: pantum-m7300-bundle${{ matrix.variant.suffix }}
       ENABLE_ESCL: ${{ matrix.variant.escl }}
 
+    # ubuntu:22.04 容器默认使用 sh (dash), 脚本含 bash 语法, 统一指定 bash
+    defaults:
+      run:
+        shell: bash
+
     steps:
       - name: Install git (required by checkout)
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends git ca-certificates
+          apt-get install -y --no-install-recommends git ca-certificates bash
 
       - name: Check out source (with submodules)
         uses: actions/checkout@v4
